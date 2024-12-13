@@ -1,0 +1,107 @@
+version: '3.9'
+services:
+  api:
+    container_name: ${API_SERVER_HOST}
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    restart: always
+    env_file:
+      - .env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      selenium-hub:
+        condition: service_healthy
+      chrome:
+        condition: service_healthy
+    ports:
+      - 5000:5000
+    networks:
+      - app-network
+    command: [
+      "poetry", "run", "uvicorn", "app:create_app",
+      "--host", "0.0.0.0",
+      "--port", '5000'
+    ]
+
+  rabbitmq:
+    container_name: ${RABBITMQ_HOST}
+    image: rabbitmq:3.6-management-alpine
+    env_file:
+      - .env
+    healthcheck:
+      test: [ "CMD", "nc", "-z", "${RABBITMQ_HOST}", "5672" ]
+      timeout: 5s
+      retries: 1
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_DEFAULT_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_DEFAULT_PASS}
+    networks:
+      - app-network
+
+  selenium-hub:
+    container_name: ${SELENIUM_HOST}
+    image: selenium/hub
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://${SELENIUM_HOST}:4444/status" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    networks:
+      - app-network
+
+  chrome:
+    container_name: chrome
+    image: selenium/node-chrome
+    depends_on:
+      selenium-hub:
+        condition: service_healthy
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://${SELENIUM_HOST}:4444/wd/hub/status" ]
+      interval: 5s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /dev/shm:/dev/shm
+    networks:
+      - app-network
+    links:
+      - selenium-hub
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    networks:
+      - app-network
+    environment:
+      - OTEL_CONFIG=/etc/otel-collector-config.yaml
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml
+
+  consumer:
+    container_name: consumer
+    build:
+      context: .
+      dockerfile: docker/consumer/Dockerfile
+    restart: always
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

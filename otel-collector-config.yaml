@@ -1,0 +1,25 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: ":4317"
+      http:
+        endpoint: ":55681"
+
+processors:
+  batch:
+
+exporters:
+  logging:
+    loglevel: debug
+  otlp:
+    endpoint: "your-otel-backend-endpoint:4317"
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [logging, otlp]
